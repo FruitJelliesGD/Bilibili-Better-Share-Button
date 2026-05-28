@@ -2,7 +2,7 @@
 // @name         更好的B站分享按钮
 // @author       果冻大神
 // @namespace    http://tampermonkey.net/
-// @version      2026.2.9
+// @version      2026.5.28
 // @description  替换原有分享按钮，点击后调用api生成短链接并复制页面标题和短链接到剪切板
 // @match        *://www.bilibili.com/*
 // @match        *://live.bilibili.com/*
