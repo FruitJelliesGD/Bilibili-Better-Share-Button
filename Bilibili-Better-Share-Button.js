@@ -6,6 +6,7 @@
 // @description  替换原有分享按钮，点击后调用api生成短链接并复制页面标题和短链接到剪切板
 // @match        *://www.bilibili.com/*
 // @match        *://live.bilibili.com/*
+// @match        *://t.bilibili.com/*
 // @grant        none
 // @license      MIT
 // ==/UserScript==
@@ -73,40 +74,53 @@
                     titleText = '';
                     authorText = '';
                 }
-            } else if (window.location.pathname.startsWith('/opus')) {
-                console.log("opus 页面选择器（XPath）");
+            } else if (window.location.pathname.startsWith('/opus') || window.location.hostname === 't.bilibili.com') {
+                console.log("opus / 动态页面选择器（CSS class）");
 
-                const titleXPath = '//*[@id="app"]/div[3]/div[1]/div[2]/div/span';
-                const authorXPath = '//*[@id="app"]/div[3]/div[1]/div[3]/div[2]/div[1]';
+                // 多层回退策略获取标题
+                const titleSelectors = [
+                    '.opus-module-title__text',           // opus 文章/动态 - 精确匹配标题文本 span
+                    '.opus-module-title__content',        // opus 标题容器
+                    '.opus-module-title',                 // opus 标题模块
+                    '.dyn-card-opus__summary',            // t.bilibili.com 卡片摘要（作为标题回退）
+                ];
 
-                try {
-                    // 获取标题
-                    const titleResult = document.evaluate(
-                        titleXPath,
-                        document,
-                        null,
-                        XPathResult.FIRST_ORDERED_NODE_TYPE,
-                        null
-                    );
-                    titleText = titleResult.singleNodeValue
-                        ? titleResult.singleNodeValue.textContent.trim()
-                        : '';
+                for (const sel of titleSelectors) {
+                    const el = document.querySelector(sel);
+                    if (el) {
+                        const text = el.textContent.trim();
+                        if (text.length > 0) {
+                            titleText = text;
+                            break;
+                        }
+                    }
+                }
 
-                    // 获取 UP 主
-                    const authorResult = document.evaluate(
-                        authorXPath,
-                        document,
-                        null,
-                        XPathResult.FIRST_ORDERED_NODE_TYPE,
-                        null
-                    );
-                    authorText = authorResult.singleNodeValue
-                        ? authorResult.singleNodeValue.textContent.trim()
-                        : '';
-                } catch (e) {
-                    console.error('opus 页面 XPath 解析失败:', e);
-                    titleText = '';
-                    authorText = '';
+                // 如果 DOM 中找不到标题，回退到 document.title 并清理后缀
+                if (!titleText) {
+                    titleText = document.title
+                        .replace(/\s*[-—–]\s*哔哩哔哩\s*$/, '')
+                        .replace(/\s*[-—–]\s*bilibili\s*$/, '')
+                        .trim();
+                    console.log("标题回退到 document.title:", titleText);
+                }
+
+                // 多层回退策略获取 UP 主
+                const authorSelectors = [
+                    '.opus-module-author__name',          // opus 页面作者名
+                    '.bili-dyn-title__text',              // t.bilibili.com 动态页作者名
+                    '.bili-dyn-title',                    // t.bilibili.com 作者容器
+                ];
+
+                for (const sel of authorSelectors) {
+                    const el = document.querySelector(sel);
+                    if (el) {
+                        const text = el.textContent.trim();
+                        if (text.length > 0) {
+                            authorText = text;
+                            break;
+                        }
+                    }
                 }
             }
             else if (window.location.pathname.startsWith('/list')) {
@@ -154,8 +168,13 @@
     // 通过计算原有按钮的字体大小来动态设置提示消息的样式。
     // 消息会在页面上显示一秒钟后自动移除。
     function showSuccessMessage(message) {
-        const betterShareSpan = document.getElementById('BetterShare');
-        const betterShareFontSize = window.getComputedStyle(betterShareSpan).fontSize;
+        // 优先查找 BetterShare 按钮，回退到 opus 页面的分享按钮
+        const betterShareSpan = document.getElementById('BetterShare')
+            || document.querySelector('.side-toolbar__action.share')
+            || document.querySelector('.icon-ctnr .BetterShare');
+        const betterShareFontSize = betterShareSpan
+            ? window.getComputedStyle(betterShareSpan).fontSize
+            : '14px';
         const fontSizeValue = parseFloat(betterShareFontSize);
 
         const messageDiv = document.createElement('div');
@@ -176,12 +195,12 @@
         });
 
         if (betterShareSpan) {
-            const rect = betterShareSpan.getBoundingClientRect(); // 获取 BetterShare 按钮的位置
+            const rect = betterShareSpan.getBoundingClientRect(); // 获取分享按钮的位置
             const messageDivRect = messageDiv.getBoundingClientRect(); // 获取消息框的位置
-            messageDiv.style.left = `${rect.left + (rect.width / 2) - (messageDivRect.width / 2)}px`; // 中心对齐
+            messageDiv.style.left = `${rect.left + (rect.width / 2) - (messageDivRect.width / 2)}px`; // 水平居中对齐
             messageDiv.style.top = `${rect.top - messageDivRect.height - 10}px`; // 在按钮上方显示，并留出 10px 间距
         } else {
-            console.warn('未找到 BetterShare span，无法定位提示 div。'); // 找不到按钮时输出警告
+            console.warn('未找到分享按钮，无法定位提示 div。'); // 找不到按钮时输出警告
         }
 
         setTimeout(() => {
@@ -389,63 +408,11 @@
             path.setAttribute("fill-rule", "evenodd");
             path.setAttribute("clip-rule", "evenodd");
             path.setAttribute("d", "M7.54545 8.77273C7.54545 8.2991 7.40057 7.8593 7.15271 7.49525L8.45958 5.85854C8.73664 5.97879 9.04235 6.04545 9.36364 6.04545C10.6188 6.04545 11.6364 5.02792 11.6364 3.77273C11.6364 2.51753 10.6188 1.5 9.36364 1.5C8.10844 1.5 7.09091 2.51753 7.09091 3.77273C7.09091 4.37821 7.32768 4.92839 7.71369 5.33573L6.49801 6.85824C6.14444 6.63149 5.72394 6.5 5.27273 6.5C4.01753 6.5 3 7.51753 3 8.77273C3 10.0279 4.01753 11.0455 5.27273 11.0455C5.9233 11.0455 6.51003 10.7721 6.92432 10.334L8.59402 11.1688C8.50381 11.4137 8.45455 11.6784 8.45455 11.9545C8.45455 13.2097 9.47208 14.2273 10.7273 14.2273C11.9825 14.2273 13 13.2097 13 11.9545C13 10.6994 11.9825 9.68182 10.7273 9.68182C10.0767 9.68182 9.48997 9.95517 9.07568 10.3933L7.40598 9.55843C7.49619 9.31357 7.54545 9.0489 7.54545 8.77273ZM10.7273 3.77273C10.7273 4.52584 10.1168 5.13636 9.36364 5.13636C8.61052 5.13636 8 4.52584 8 3.77273C8 3.01961 8.61052 2.40909 9.36364 2.40909C10.1168 2.40909 10.7273 3.01961 10.7273 3.77273ZM5.27273 10.1364C6.02584 10.1364 6.63636 9.52584 6.63636 8.77273C6.63636 8.01961 6.02584 7.40909 5.27273 7.40909C4.51961 7.40909 3.90909 8.01961 3.90909 8.77273C3.90909 9.52584 4.51961 10.1364 5.27273 10.1364ZM12.0909 11.9545C12.0909 12.7077 11.4804 13.3182 10.7273 13.3182C9.97416 13.3182 9.36364 12.7077 9.36364 11.9545C9.36364 11.2014 9.97416 10.5909 10.7273 10.5909C11.4804 10.5909 12.0909 11.2014 12.0909 11.9545Z");
-            path.setAttribute("fill", "#979797"); // 设置路径颜色
-            svgElement.appendChild(path); // 将路径元素添加到 SVG 中
-
-            newDiv.appendChild(svgElement); // 将 SVG 添加到新的 div 中
+            path.setAttribute("fill", "currentColor");
+            svgElement.appendChild(path);
+            newDiv.appendChild(svgElement);
 
             // 创建新的 span 元素，并应用替代的样式
-            const newSpan = createReplacementSpan(true);
-
-            // 查找目标 span 元素以获取其样式
-            const targetSpan = document.querySelector("#head-info-vm > div > div.upper-row > div.right-ctnr > div.icon-ctnr.live-skin-normal-a-text.not-hover > span");
-            if (targetSpan) {
-                // 如果找到目标 span，则获取其计算样式并应用到新的 span 上
-                const computedStyle = window.getComputedStyle(targetSpan);
-                Object.assign(newSpan.style, {
-                    fontSize: computedStyle.fontSize,
-                    lineHeight: computedStyle.lineHeight,
-                    marginLeft: computedStyle.marginLeft,
-                    fontWeight: computedStyle.fontWeight // 复制字体粗细
-                });
-                newSpan.className = targetSpan.className; // 复制类名以匹配样式
-                newSpan.style.verticalAlign = 'middle'; // 垂直对齐方式
-            } else {
-                // 如果未找到目标 span，则在控制台输出警告
-                console.warn('未找到目标 span 元素，样式无法获取。');
-            }
-
-            newDiv.appendChild(newSpan); // 将新的 span 添加到新的 div 中
-
-            // 查找目标 div 元素以获取其样式
-            const targetElement = document.querySelector("#head-info-vm > div > div.upper-row > div.right-ctnr > div.icon-ctnr.live-skin-normal-a-text.not-hover");
-            if (targetElement) {
-                // 如果找到目标 div，则应用其计算样式到新的 div 上
-                const computedStyle = window.getComputedStyle(targetElement);
-                Object.assign(newDiv.style, {
-                    color: computedStyle.color,
-                    fontSize: computedStyle.fontSize,
-                    fontWeight: computedStyle.fontWeight,
-                    backgroundColor: computedStyle.backgroundColor,
-                    height: computedStyle.height,
-                    lineHeight: computedStyle.lineHeight,
-                    padding: computedStyle.padding,
-                    marginLeft: computedStyle.marginLeft,
-                    border: computedStyle.border,
-                    borderRadius: computedStyle.borderRadius,
-                    cursor: 'pointer' // 设置光标样式
-                });
-            } else {
-                // 如果未找到目标 div，则在控制台输出警告
-                console.warn('未找到目标 div 元素，样式无法获取。');
-            }
-
-            // 查找目标容器并将新的 div 添加到其中
-            const liveToolbar = document.querySelector("#head-info-vm > div > div.upper-row > div.right-ctnr");
-            if (liveToolbar) {
-                liveToolbar.style.position = 'relative'; // 确保新按钮定位正确
-                liveToolbar.appendChild(newDiv); // 将新的分享按钮添加到目标容器中
-            }
         } else {
             // 如果未找到旧按钮，则每 500 毫秒重试一次
             setTimeout(replaceLiveShareSpan, 500);
@@ -462,12 +429,91 @@
     }
 
     // 替换新版阅读页面中的分享按钮
-    // 调用 replaceShareButton 函数，将阅读页面中指定的旧分享按钮替换为新按钮
+    // 在右侧工具栏（.side-toolbar__box）末尾插入分享按钮，使用直播页面相同的分享图标
     function replaceNewReadShareSpan() {
-        replaceShareButton(
-            "#app > div.opus-detail > div.bili-opus-view > div.opus-module-bottom > div.opus-module-bottom__share", // 旧按钮的选择器
-            "#app > div.opus-detail > div.bili-opus-view > div.opus-module-bottom" // 新按钮应添加到的容器选择器
-        );
+        const retryCount = { current: 0 };
+        const maxRetries = 20; // 最多重试 10 秒（20 × 500ms)
+
+        function tryInsertShareButton() {
+            const sideToolbarBox = document.querySelector('.side-toolbar__box');
+
+            if (sideToolbarBox) {
+                // 创建分享按钮容器
+                const shareAction = document.createElement('div');
+                shareAction.className = 'side-toolbar__action share';
+                shareAction.style.cursor = 'pointer';
+                shareAction.style.display = 'flex';
+                shareAction.style.flexDirection = 'column';
+                shareAction.style.alignItems = 'center';
+                shareAction.style.gap = '2px';
+
+                // 使用与直播页面相同的分享 SVG 图标
+                const svgElement = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+                svgElement.setAttribute("width", "24");
+                svgElement.setAttribute("height", "24");
+                svgElement.setAttribute("viewBox", "0 0 16 16");
+                svgElement.setAttribute("fill", "none");
+                svgElement.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+
+                const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                path.setAttribute("fill-rule", "evenodd");
+                path.setAttribute("clip-rule", "evenodd");
+                path.setAttribute("d", "M7.54545 8.77273C7.54545 8.2991 7.40057 7.8593 7.15271 7.49525L8.45958 5.85854C8.73664 5.97879 9.04235 6.04545 9.36364 6.04545C10.6188 6.04545 11.6364 5.02792 11.6364 3.77273C11.6364 2.51753 10.6188 1.5 9.36364 1.5C8.10844 1.5 7.09091 2.51753 7.09091 3.77273C7.09091 4.37821 7.32768 4.92839 7.71369 5.33573L6.49801 6.85824C6.14444 6.63149 5.72394 6.5 5.27273 6.5C4.01753 6.5 3 7.51753 3 8.77273C3 10.0279 4.01753 11.0455 5.27273 11.0455C5.9233 11.0455 6.51003 10.7721 6.92432 10.334L8.59402 11.1688C8.50381 11.4137 8.45455 11.6784 8.45455 11.9545C8.45455 13.2097 9.47208 14.2273 10.7273 14.2273C11.9825 14.2273 13 13.2097 13 11.9545C13 10.6994 11.9825 9.68182 10.7273 9.68182C10.0767 9.68182 9.48997 9.95517 9.07568 10.3933L7.40598 9.55843C7.49619 9.31357 7.54545 9.0489 7.54545 8.77273ZM10.7273 3.77273C10.7273 4.52584 10.1168 5.13636 9.36364 5.13636C8.61052 5.13636 8 4.52584 8 3.77273C8 3.01961 8.61052 2.40909 9.36364 2.40909C10.1168 2.40909 10.7273 3.01961 10.7273 3.77273ZM5.27273 10.1364C6.02584 10.1364 6.63636 9.52584 6.63636 8.77273C6.63636 8.01961 6.02584 7.40909 5.27273 7.40909C4.51961 7.40909 3.90909 8.01961 3.90909 8.77273C3.90909 9.52584 4.51961 10.1364 5.27273 10.1364ZM12.0909 11.9545C12.0909 12.7077 11.4804 13.3182 10.7273 13.3182C9.97416 13.3182 9.36364 12.7077 9.36364 11.9545C9.36364 11.2014 9.97416 10.5909 10.7273 10.5909C11.4804 10.5909 12.0909 11.2014 12.0909 11.9545Z");
+                path.setAttribute("fill", "currentColor");
+                svgElement.appendChild(path);
+                shareAction.appendChild(svgElement);
+
+                // 添加"分享"文字标识
+                const label = document.createElement('span');
+                label.innerText = '分享';
+                label.style.fontSize = '12px';
+                label.style.lineHeight = '1';
+                label.style.marginTop = '2px';
+                shareAction.appendChild(label);
+
+                // 复制现有按钮的颜色样式
+                const existingAction = sideToolbarBox.querySelector('.side-toolbar__action');
+                if (existingAction) {
+                    const computedStyle = window.getComputedStyle(existingAction);
+                    shareAction.style.color = computedStyle.color;
+                    shareAction.style.fontSize = computedStyle.fontSize;
+                    shareAction.style.lineHeight = computedStyle.lineHeight;
+                    shareAction.style.cursor = 'pointer';
+                }
+
+                // 在工具栏末尾插入分享按钮
+                sideToolbarBox.appendChild(shareAction);
+
+                // 绑定点击事件：获取标题和UP主，生成短链接并复制
+                shareAction.addEventListener('click', async (event) => {
+                    event.stopPropagation();
+                    const title = cleanTitle(document.title, false);
+                    let url = window.location.href;
+                    try {
+                        const shortUrl = await getShortenedUrl(url);
+                        const textToCopy = `${title}\n链接：${shortUrl}`;
+                        console.log("最终复制内容:", textToCopy);
+                        copyToClipboard(textToCopy);
+                    } catch (error) {
+                        console.error('获取短链接失败:', error);
+                    }
+                });
+
+                // 移除底部原始分享区域（如果存在）
+                const oldShareArea = document.querySelector('.opus-module-bottom__share');
+                if (oldShareArea) {
+                    oldShareArea.remove();
+                    console.log('已移除底部原始分享区域');
+                }
+
+                console.log('已将分享按钮插入右侧工具栏');
+            } else if (retryCount.current < maxRetries) {
+                retryCount.current++;
+                setTimeout(tryInsertShareButton, 500);
+            }
+        }
+
+        setTimeout(tryInsertShareButton, 500);
     }
 
     // 初始化函数，用于根据不同页面类型调用相应的替换函数
@@ -479,8 +525,8 @@
         } else if (window.location.pathname.startsWith('/read')) {
             // 如果是阅读页面，调用替换阅读分享按钮的函数
             replaceReadShareSpan();
-        } else if (window.location.pathname.startsWith('/opus')) {
-            // 如果是新版阅读页面，调用替换阅读分享按钮的函数
+        } else if (window.location.pathname.startsWith('/opus') || window.location.hostname === 't.bilibili.com') {
+            // 新版阅读页面（opus）和动态页面（t.bilibili.com）
             replaceNewReadShareSpan();
         } else if (window.location.pathname.startsWith('/video')) {
             // 对于视频类型的页面，调用替换视频分享按钮的函数
