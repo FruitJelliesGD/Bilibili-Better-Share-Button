@@ -2,7 +2,7 @@
 // @name         更好的B站分享按钮
 // @author       果冻大神
 // @namespace    http://tampermonkey.net/
-// @version      2026.5.28
+// @version      2026.5.29
 // @description  替换原有分享按钮，点击后调用api生成短链接并复制页面标题和短链接到剪切板
 // @match        *://www.bilibili.com/*
 // @match        *://live.bilibili.com/*
@@ -168,8 +168,9 @@
     // 通过计算原有按钮的字体大小来动态设置提示消息的样式。
     // 消息会在页面上显示一秒钟后自动移除。
     function showSuccessMessage(message) {
-        // 优先查找 BetterShare 按钮，回退到 opus 页面的分享按钮
+        // 优先查找 BetterShare 按钮，回退到原分享按钮或 opus/直播页面的按钮
         const betterShareSpan = document.getElementById('BetterShare')
+            || document.getElementById('share-btn-outer')
             || document.querySelector('.side-toolbar__action.share')
             || document.querySelector('.icon-ctnr .BetterShare');
         const betterShareFontSize = betterShareSpan
@@ -188,7 +189,7 @@
             color: '#ffffff', // 文本颜色为白色
             borderRadius: `${fontSizeValue * 0.5}px`, // 动态设置圆角
             boxShadow: `0 ${fontSizeValue * 0.1}px ${fontSizeValue * 0.5}px rgba(0,0,0,0.2)`, // 添加阴影
-            zIndex: 9999, // 使提示消息浮在其他内容之上
+            zIndex: 99999, // 使提示消息浮在其他内容之上
             fontSize: betterShareFontSize, // 设置与按钮相同的字体大小
             fontWeight: 'bold', // 设置字体加粗
             maxWidth: '300px', // 限制最大宽度
@@ -341,40 +342,33 @@
             return;
         }
 
-        const svgElement = oldButton.querySelector("svg"); // 更安全的SVG获取方式
-        oldButton.remove();
+        // 拦截原按钮的点击事件，替换为自定义复制逻辑
+        oldButton.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            event.preventDefault();
 
-        // 1. 统一声明变量（避免作用域问题）
-        let toolbar;
-        let targetContainer;
+            const title = cleanTitle(document.title, false);
 
-        // 2. 根据路径初始化变量
-        if (window.location.pathname.startsWith('/list')) {
-            toolbar = document.querySelector("#playlistToolbar > div.video-toolbar-left > div");
-            targetContainer = document.querySelector("#playlistToolbar > div.video-toolbar-left > div > div:nth-child(4) > div"); // 列表页目标容器就是toolbar本身
-        } else {
-            toolbar = document.querySelector("#arc_toolbar_report > div.video-toolbar-left > div.video-toolbar-left-main");
-            // 详情页目标容器是工具栏内的特定子元素
-            targetContainer = document.querySelector("#arc_toolbar_report > div.video-toolbar-left > div.video-toolbar-left-main > div:nth-child(4) > div");
-        }
+            let url = window.location.href;
 
-        // 3. 检查并操作元素
-        if (!toolbar) {
-            console.warn('工具栏未找到');
-            return;
-        }
+            // === 针对稍后再看页面的特殊处理 ===
+            if (window.location.pathname.startsWith('/list')) {
+                const params = new URLSearchParams(window.location.search);
+                const bvid = params.get('bvid');
+                if (bvid) {
+                    url = `https://www.bilibili.com/video/${bvid}/`;
+                }
+            }
 
-        toolbar.style.position = 'relative'; // 设置工具栏定位
-
-        if (!targetContainer) {
-            console.warn('目标容器未找到');
-            return;
-        }
-
-        // 清空容器并添加新内容
-        targetContainer.innerHTML = ''; // 更简洁的清空方式
-        if (svgElement) targetContainer.appendChild(svgElement);
-        targetContainer.appendChild(createReplacementSpan());
+            try {
+                const shortUrl = await getShortenedUrl(url);
+                const textToCopy = `${title}\n链接：${shortUrl}`;
+                console.log("最终复制内容:", textToCopy);
+                copyToClipboard(textToCopy);
+            } catch (error) {
+                console.error('获取短链接失败:', error);
+            }
+        }, true);
     }
 
 
