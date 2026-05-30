@@ -4,6 +4,21 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.5.30] - 2026-05-30
+
+### Changed
+- 直播页面分享策略全面重构：从"移除旧按钮→创建新 div/SVG/span"改为**事件拦截模式**，拦截管理面板第 2 个按钮的点击事件，保留原按钮样式不变
+- 直播页面标题获取：从 DOM 选择器 `.live-title .text` 改为通过 API `https://api.live.bilibili.com/room/v1/Room/get_info` 获取，结果更可靠
+- 直播页面 UP 主选择器路径修正：主选择器 `.room-owner-username` 增加空文本回退检查，备用选择器增加一层 DOM 层级 `div > div`（`#head-info-vm > div > div > div.closedown-left > ...`）
+- 直播页面链接：不再使用短链接，使用原始格式 `https://live.bilibili.com/房间号`
+- `cleanTitle` 直播页分支：`titleText` 置空（标题改由 API 获取），仅获取 UP 主
+- `showSuccessMessage` 函数：新增可选参数 `targetElement`，支持传入目标元素定位提示消息
+- 直播页重试机制优化：使用函数级 `retryCount` 属性追踪，最多 20 次（10 秒），避免无限轮询
+
+### Added
+- 新增 `extractRoomIdFromUrl()` 函数：正则提取直播房间号，支持 `/11505460` 和 `/blanc/11505460` 两种 URL 格式
+- 新增 `getLiveRoomInfo()` 函数：调用 B 站直播 API 获取直播间标题和房间号
+
 ## [2026.5.29] - 2026-05-30
 
 ### Added

@@ -2,7 +2,7 @@
 // @name         更好的B站分享按钮
 // @author       果冻大神
 // @namespace    http://tampermonkey.net/
-// @version      2026.5.29
+// @version      2026.5.30
 // @description  替换原有分享按钮，点击后调用api生成短链接并复制页面标题和短链接到剪切板
 // @match        *://www.bilibili.com/*
 // @match        *://live.bilibili.com/*
@@ -28,18 +28,17 @@
             // 根据页面类型选择不同的选择器
             if (isLive || window.location.hostname === 'live.bilibili.com') {
                 console.log("直播页面选择器");
-                // 使用您提供的XPath转换的选择器
-                const titleElement = document.querySelector('.live-title .text');
+                // 标题不从DOM获取，将在replaceLiveShareSpan中通过API获取
+                // 这里只获取UP主名字
+                titleText = ''; // 标题将在调用处通过API获取
+
+                // 获取UP主名字，多层回退
                 let authorElement = document.querySelector('.room-owner-username');
-                if (!authorElement) {
+                if (!authorElement || !authorElement.textContent.trim()) {
                     authorElement = document.querySelector(
-                        "#head-info-vm > div.closedown-left > div.left-lower-row > div > a.initiator-name.pointer.live-skin-normal-a-text"
+                        "#head-info-vm > div > div > div.closedown-left > div.left-lower-row > div > a.initiator-name.pointer.live-skin-normal-a-text"
                     );
                 }
-                titleText = titleElement ? titleElement.textContent.trim() : '';
-                authorText = authorElement ? authorElement.textContent.trim() : '';
-
-                titleText = titleElement ? titleElement.textContent.trim() : '';
                 authorText = authorElement ? authorElement.textContent.trim() : '';
             } else if (window.location.pathname.startsWith('/read')) {
                 console.log("阅读页面选择器（XPath）");
@@ -167,9 +166,11 @@
     // 创建一个新的 `div` 元素来显示消息，并设置其样式。
     // 通过计算原有按钮的字体大小来动态设置提示消息的样式。
     // 消息会在页面上显示一秒钟后自动移除。
-    function showSuccessMessage(message) {
-        // 优先查找 BetterShare 按钮，回退到原分享按钮或 opus/直播页面的按钮
-        const betterShareSpan = document.getElementById('BetterShare')
+    // 如果提供了 targetElement 参数，则使用该元素定位提示消息；否则使用默认逻辑查找按钮。
+    function showSuccessMessage(message, targetElement = null) {
+        // 优先使用传入的目标元素，回退到默认选择器
+        const betterShareSpan = targetElement
+            || document.getElementById('BetterShare')
             || document.getElementById('share-btn-outer')
             || document.querySelector('.side-toolbar__action.share')
             || document.querySelector('.icon-ctnr .BetterShare');
@@ -207,6 +208,37 @@
         setTimeout(() => {
             messageDiv.remove(); // 一秒后移除提示消息
         }, 1000);
+    }
+
+    // 从直播页面URL中提取房间号
+    // 支持格式：https://live.bilibili.com/11505460 或 https://live.bilibili.com/blanc/11505460
+    function extractRoomIdFromUrl() {
+        const match = window.location.pathname.match(/\/(?:blanc\/)?(\d+)/);
+        return match ? match[1] : null;
+    }
+
+    // 从B站直播API获取直播间信息（标题等）
+    // 返回 { title: string, roomId: string } 或 null
+    async function getLiveRoomInfo() {
+        const roomId = extractRoomIdFromUrl();
+        if (!roomId) {
+            console.warn('无法从URL中提取房间号');
+            return null;
+        }
+
+        try {
+            const response = await fetch(`https://api.live.bilibili.com/room/v1/Room/get_info?room_id=${roomId}`);
+            const data = await response.json();
+            if (data.code === 0 && data.data) {
+                return {
+                    title: data.data.title || '',
+                    roomId: roomId
+                };
+            }
+        } catch (error) {
+            console.error('获取直播间信息失败:', error);
+        }
+        return null;
     }
 
     // 使用 B 站的 API 生成短链接。
@@ -372,45 +404,53 @@
     }
 
 
-    // 替换直播页面中的分享按钮
-    // 查找并移除现有的分享按钮，然后创建并添加一个新的分享按钮，包括 SVG 图标和功能
-    // 如果目标位置未找到，则每 500 毫秒重试一次，直到成功替换
+    // 替换直播页面中的管理面板按钮功能
+    // 拦截原按钮的点击事件，替换为脚本提供的分享模板复制逻辑
+    // 保留原按钮的样式和外观，只改变其点击行为
 
     function replaceLiveShareSpan() {
-        // 查找现有的分享按钮
-        const oldButton = document.querySelector("#head-info-vm > div > div.upper-row > div.right-ctnr > div.more.live-skin-normal-a-text");
+        // 查找管理面板中的第二个按钮
+        const targetButton = document.querySelector("#head-info-vm > div > div > div.right-fixed-modules > div.room-manage-panel.non-anchor > div.room-manage-head > div.room-manage-head-actions > div:nth-child(2)");
 
-        if (oldButton) {
-            // 如果找到旧按钮，先将其从页面中移除
-            oldButton.remove();
-
-            // 创建新的 div 元素用于放置新的分享按钮
-            const newDiv = document.createElement('div');
-            newDiv.className = 'icon-ctnr live-skin-normal-a-text pointer'; // 设置新按钮的类名以匹配目标样式
-            newDiv.style.display = 'flex'; // 使用 flex 布局以确保按钮的正确排列
-
-            // 创建 SVG 元素并设置其属性
-            const svgElement = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-            svgElement.setAttribute("width", "16");
-            svgElement.setAttribute("height", "16");
-            svgElement.setAttribute("viewBox", "0 0 16 16");
-            svgElement.setAttribute("fill", "none");
-            svgElement.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-
-            // 创建 SVG 的路径元素并设置其属性
-            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-            path.setAttribute("fill-rule", "evenodd");
-            path.setAttribute("clip-rule", "evenodd");
-            path.setAttribute("d", "M7.54545 8.77273C7.54545 8.2991 7.40057 7.8593 7.15271 7.49525L8.45958 5.85854C8.73664 5.97879 9.04235 6.04545 9.36364 6.04545C10.6188 6.04545 11.6364 5.02792 11.6364 3.77273C11.6364 2.51753 10.6188 1.5 9.36364 1.5C8.10844 1.5 7.09091 2.51753 7.09091 3.77273C7.09091 4.37821 7.32768 4.92839 7.71369 5.33573L6.49801 6.85824C6.14444 6.63149 5.72394 6.5 5.27273 6.5C4.01753 6.5 3 7.51753 3 8.77273C3 10.0279 4.01753 11.0455 5.27273 11.0455C5.9233 11.0455 6.51003 10.7721 6.92432 10.334L8.59402 11.1688C8.50381 11.4137 8.45455 11.6784 8.45455 11.9545C8.45455 13.2097 9.47208 14.2273 10.7273 14.2273C11.9825 14.2273 13 13.2097 13 11.9545C13 10.6994 11.9825 9.68182 10.7273 9.68182C10.0767 9.68182 9.48997 9.95517 9.07568 10.3933L7.40598 9.55843C7.49619 9.31357 7.54545 9.0489 7.54545 8.77273ZM10.7273 3.77273C10.7273 4.52584 10.1168 5.13636 9.36364 5.13636C8.61052 5.13636 8 4.52584 8 3.77273C8 3.01961 8.61052 2.40909 9.36364 2.40909C10.1168 2.40909 10.7273 3.01961 10.7273 3.77273ZM5.27273 10.1364C6.02584 10.1364 6.63636 9.52584 6.63636 8.77273C6.63636 8.01961 6.02584 7.40909 5.27273 7.40909C4.51961 7.40909 3.90909 8.01961 3.90909 8.77273C3.90909 9.52584 4.51961 10.1364 5.27273 10.1364ZM12.0909 11.9545C12.0909 12.7077 11.4804 13.3182 10.7273 13.3182C9.97416 13.3182 9.36364 12.7077 9.36364 11.9545C9.36364 11.2014 9.97416 10.5909 10.7273 10.5909C11.4804 10.5909 12.0909 11.2014 12.0909 11.9545Z");
-            path.setAttribute("fill", "currentColor");
-            svgElement.appendChild(path);
-            newDiv.appendChild(svgElement);
-
-            // 创建新的 span 元素，并应用替代的样式
-        } else {
-            // 如果未找到旧按钮，则每 500 毫秒重试一次
-            setTimeout(replaceLiveShareSpan, 500);
+        if (!targetButton) {
+            // 如果未找到目标按钮，每 500 毫秒重试一次，最多重试 20 次（10秒）
+            replaceLiveShareSpan.retryCount = (replaceLiveShareSpan.retryCount || 0) + 1;
+            if (replaceLiveShareSpan.retryCount <= 20) {
+                setTimeout(replaceLiveShareSpan, 500);
+            }
+            return;
         }
+
+        // 找到目标按钮，重置重试计数
+        replaceLiveShareSpan.retryCount = 0;
+
+        // 拦截原按钮的点击事件，替换为自定义复制逻辑
+        targetButton.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            event.preventDefault();
+
+            try {
+                // 从API获取直播间标题
+                const roomInfo = await getLiveRoomInfo();
+                const title = roomInfo ? roomInfo.title : '';
+                const roomId = roomInfo ? roomInfo.roomId : extractRoomIdFromUrl();
+
+                // 获取UP主名字（从cleanTitle获取，但只取UP主部分）
+                const cleanTitleResult = cleanTitle(document.title, true);
+                const authorMatch = cleanTitleResult.match(/UP主：(.*)/);
+                const author = authorMatch ? authorMatch[1] : '';
+
+                // 使用原始链接格式
+                const url = `https://live.bilibili.com/${roomId}`;
+
+                const textToCopy = `标题：${title}\nUP主：${author}\n链接：${url}`;
+                console.log("最终复制内容:", textToCopy);
+                copyToClipboard(textToCopy);
+                showSuccessMessage("复制成功", targetButton);
+            } catch (error) {
+                console.error('获取直播间信息失败:', error);
+            }
+        }, true); // 使用捕获阶段，确保在原事件处理器之前执行
     }
 
     // 替换阅读页面中的分享按钮
